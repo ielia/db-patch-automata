@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+
+. "$(dirname "${0}")/lib-logging.sh"
+. "$(dirname "${0}")/dbvariables.sh"
+
+#------------------------------------------------------------------------------
+function check(){
+  local let last_cmd=(${PIPESTATUS[*]})
+  local log_file=${1}
+
+  local let cmd_status=0
+  local retval
+  for retval in "${last_cmd[@]}"; do
+    [ ${retval} -ne 0 ] && let ++cmd_status
+  done
+
+  if [ ${cmd_status} -ne 0 ] || grep -qE "^ *(ERROR|psql: FATAL)" "${log_file}"
+  then
+    echo "See errors in file ${log_file}" >&2
+    return -1
+  elif grep -q "No such file or directory" "${log_file}"; then
+    echo "See errors in file ${log_file}" >&2
+    return -1
+  fi
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function checkFiles(){
+  local L_EXIT=0
+  for file in "${@}"; do
+    if [ ! -f "${file}" ]; then
+      echo "ERROR: missing input file: ${file}" >&2
+      L_EXIT=1
+    fi
+  done
+  [ "${L_EXIT}" == 1 ] && exit 1
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function checkUponDeclaredConnection(){
+  local conn=${1}
+
+  local let ubound=${#DECLARED_CONNECTIONS[*]}
+  local i element
+  for (( i=0; ${i}<${ubound}; ++i )); do
+    element="${DECLARED_CONNECTIONS[${i}]}"
+    [ "${conn}" == "${element}" ] && return 0
+  done
+  echo "Connection ${conn} was undeclared." | tee "${LOG_FILE}" >&2
+  exit -1
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function declareConnections(){
+  DECLARED_CONNECTIONS=("${@}")
+  [ ${PATCH_STATUS} -eq 1 ] && exit 0
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function exec_sql(){
+  local params=${1}
+  shift
+
+  local PSQL=$(which psql)
+
+  # Create temporary patch file
+  local tmpfile="$(mktemp -t "${PATCH_NAME//\//_}.sql.XXXXXXXXXXXXXXXX")"
+  exit_on_error 'Could NOT create temporary file.'
+  grep -viE '(^|;)[ 	]*begin[ 	]*;' | grep -viE '(^|;)[ 	]*commit[ 	]*;' >> "${tmpfile}"
+  exit_on_error "Could NOT write to temporary file ${tmpfile}."
+
+  local arg i
+  local let errors=0
+  for (( i=1; i<=${#}; ++i )) {
+    eval "arg=\${${i}}" # host:port:db:user:pass
+
+    # Check connection is in the declared list of connections
+    checkUponDeclaredConnection "${arg}"
+
+    # Create transaction spec.
+    let ++TRID
+    local transaction="${PATCH_NAME} (${TRID})"
+
+    # Unpack connection spec.
+    local pass=${arg#*:} # port:db:user:pass
+    local port=${pass%%:*}
+    pass=${pass#*:} # db:user:pass
+    local db=${pass%%:*}
+    pass=${pass#*:} # user:pass
+    local user=${pass%%:*}
+    pass=${pass#*:}
+    local host=${arg%%:*}
+    local log_file="${LOG_FILE%\.log}.${host}:${port}:${db}:${TRID}.log"
+
+    # Add password spec. to ~/.pgpass
+    echo "${arg}" >> ~/.pgpass
+    exit_on_error "Could NOT add password for ${host}:${port}/${db} to ~/.pgpass."
+
+    # Check if the patch was already applied
+    local result=$(echo "SELECT CASE WHEN EXISTS (SELECT * FROM pg_prepared_xacts WHERE gid = '${transaction}' AND database = '${db}') THEN 1 ELSE 0 END" | \
+    	${PSQL} -h${host} -p${port} -U${user} ${db} --tuples-only 2>&1)
+    exit_on_error "Could NOT get transaction status on ${host}:${port}/${db}."
+    if [ "${result// /}" == "1" -a ${REEXECUTE_TRANSACTIONS} -ne 0 ]; then
+      result=$(echo "ROLLBACK PREPARED '${transaction}';" | \
+      	${PSQL} -h${host} -p${port} -U${user} ${db} < "${tmpfile}" 2>&1)
+      exit_on_error "Could NOT rollback transaction on ${host}:${port}/${db}."
+      [ "${result:0:7}" == "ERROR: " -o "${result:0:13}" == "psql: FATAL: " ] \
+      	&& exit_with_error -1 "Error on ${host}:${port}/${db} while rolling back ${transaction}: ${result}"
+      result=0
+    fi
+    if [ "${result// /}" == "0" ]; then
+      # Apply patch
+      (echo "BEGIN;"; rv=0; cat "${tmpfile}" || rv=1; echo; \
+      	echo "PREPARE TRANSACTION '${transaction}';"; [ ${rv} -eq 0 ]) | \
+      	${PSQL} ${params} -h${host} -p${port} -U${user} ${db} 2>&1 | \
+      	tee "${log_file}" #&
+      check "${log_file}" || let ++errors
+    fi
+  }
+  #wait
+
+  # Remove temporary patch file
+  rm "${tmpfile}"
+  exit_on_error "Could NOT remove temporary file ${tmpfile}. Please take care of this manually."
+
+  [ ${errors} -ne 0 ] && exit ${errors}
+  return 0
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function exec_sql_and_commit(){
+  local params=${1}
+  shift
+
+  local PSQL=$(which psql)
+
+  local let trId=${TRID}
+  exec_sql "${params}" "${@}"
+
+  local arg i
+  local let errors=0
+  for (( i=1; i<=${#}; ++i )) {
+    eval "arg=\${${i}}" # host:port:db:user:pass
+
+    # Create transaction spec.
+    let ++trId
+    local transaction="${PATCH_NAME} (${trId})"
+
+    # Unpack connection spec.
+    local pass=${arg#*:} # port:db:user:pass
+    local port=${pass%%:*}
+    pass=${pass#*:} # db:user:pass
+    local db=${pass%%:*}
+    pass=${pass#*:} # user:pass
+    local user=${pass%%:*}
+    pass=${pass#*:}
+    local host=${arg%%:*}
+    local log_file="${LOG_FILE%\.log}.commit.${host}:${port}:${db}:${trId}.log"
+
+    # Commit the transaction
+    local result=$(echo "SELECT CASE WHEN EXISTS (SELECT * FROM pg_prepared_xacts WHERE gid = '${transaction}' AND database = '${db}') THEN 1 ELSE 0 END" | \
+    	${PSQL} -h${host} -p${port} -U${user} ${db} --tuples-only 2>&1)
+    exit_on_error "Could NOT get transaction status on ${host}:${port}/${db}."
+    if [ "${result// /}" == "1" ]; then
+      local result=$(echo "COMMIT PREPARED '${transaction}'" | \
+      	${PSQL} -h${host} -p${port} -U${user} ${db} --tuples-only 2>&1 | \
+      	tee "${log_file}")
+      check "${log_file}" || let ++errors
+    fi
+  }
+  [ ${errors} -ne 0 ] && exit_with_error ${errors} \
+  	"Error committing transaction '${transaction}' on ${errors} hosts."
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function inputFiles(){
+  local let i=0
+  for e in "${@}"; do
+    INPUT_FILES[${i}]="/tmp/${PATCH_NAME//%\.sh/}.${e}.in"
+    let ++i
+  done
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function outputFiles(){
+  local let i=0
+  for e in "${@}"; do
+    OUTPUT_FILES[${i}]="/tmp/${PATCH_NAME//%\.sh/}.${e}.out"
+    let ++i
+  done
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+function psql(){
+  echo "You are not supposed to do this..." >&2
+  exit -1
+}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+DECLARED_CONNECTIONS=()
+PATCH_NAME=${PATCH_RUNNER_PATCH_NAME:-${0}}
+PATCH_NAME=${PATCH_NAME#./}
+LOG_FILE=${PATCH_NAME##*/}
+LOG_FILE="/tmp/${LOG_FILE%\.sh}.log"
+PATCH_STATUS=${PATCH_RUNNER_PATCH_STATUS:-0}
+REEXECUTE_TRANSACTIONS=${REEXECUTE_TRANSACTIONS:-0}
+TRID=0
+#------------------------------------------------------------------------------
