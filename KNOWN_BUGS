@@ -1,0 +1,11 @@
+Known Bugs and Limitations
+==========================
+
+- Under certain conditions, the file ~/.pgpass may have the configured
+  passwords appended.
+- Wrong password in ~/.pgpass prevent access to the databases, no matter what
+  password have been configured in the patch_automata.
+- Database patches that use "exec_sql_and_commit" may cause trouble to roll
+  back and run again.
+- Patches that have collateral effects may cause trouble to roll back and run
+  again.

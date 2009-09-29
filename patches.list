@@ -1,0 +1,31 @@
+################################################################################
+#
+# The charater '@' is a MISCELLANEOUS encapsulator. Each MISCELLANEOUS can be a
+# dependency of a patch or depend on it. You can have both types of
+# dependencies on the same line, thus can have up to two "MISCs" in each line.
+# MISCs are always related to a patch in the same line, and can't have more
+# than one PATCH per line.
+# If you need to add '@' or '\' into them you must escape these characters
+# using the '\' character.
+# Line feed characters inside the MISCELLANEOUS have to be written as '\n'.
+# COMMENTARIES should begin with '#' character and can't be added at end of the
+# line.
+#
+#
+# Line example: 
+#     #commentary           - commentary line (not read by the patch automata).
+#     patch                 - patch without misc dependencies.
+#     @misc@ patch          - indicates that misc must have been executed
+#                             before patch (this is called "misc-patch
+#                             dependency", thus patch depends upon misc).
+#     patch @misc@          - indicates that misc must be executed after
+#                             patch (this is called "patch-misc dependency",
+#                             thus misc depends upon patch).
+#     @misc1@ patch @misc2@ - indicates that misc1 must have been executed
+#                             before patch, and patch must be executed before
+#                             misc2 (this is called "misc-patch-misc
+#                             dependency", thus misc2 depends upon patch, that
+#                             depends upon misc1).
+#     otherwise: Malformed line.
+#
+################################################################################
