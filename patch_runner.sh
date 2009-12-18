@@ -43,7 +43,8 @@ function add_patch(){
   store_pgpass_away
   echo "${PG_PATCHMANAGER}" >> ~/.pgpass
 
-  local msg=$(echo "INSERT INTO environmentpatch (patch, source) VALUES ('${name}','${src}')" | \
+  local msg;
+  msg=$(echo "INSERT INTO environmentpatch (patch, source) VALUES ('${name}','${src}')" | \
   	psql -h${PG_PATCHMANAGER_DB_HOST} -p${PG_PATCHMANAGER_DB_PORT} \
   	-U${PG_PATCHMANAGER_DB_USER} ${PG_PATCHMANAGER_DB} --tuples-only 2>&1)
   local rv=${?}
@@ -53,7 +54,7 @@ function add_patch(){
 
   # This assumes nobody other than this single running instance of patch_runner
   # is inserting anything. Also assumes time travel hasn't been invented yet...
-  local msg=$(echo "SELECT executiontime FROM environmentpatch WHERE patch = '${name}' AND source = '${src}' AND status = 0 ORDER BY executiontime DESC LIMIT 1" | \
+  msg=$(echo "SELECT executiontime FROM environmentpatch WHERE patch = '${name}' AND source = '${src}' AND status = 0 ORDER BY executiontime DESC LIMIT 1" | \
   	psql -h${PG_PATCHMANAGER_DB_HOST} -p${PG_PATCHMANAGER_DB_PORT} \
   	-U${PG_PATCHMANAGER_DB_USER} ${PG_PATCHMANAGER_DB} --tuples-only 2>&1)
   local rv=${?}
@@ -115,7 +116,8 @@ function commit_transaction(){
   store_pgpass_away
   echo "${host}:${port}:${db}:${pass}" >> ~/.pgpass
 
-  local result=$(echo "SELECT gid FROM pg_prepared_xacts WHERE gid LIKE '${name} (%)' AND database = '${db}'" | \
+  local result;
+  result=$(echo "SELECT gid FROM pg_prepared_xacts WHERE gid LIKE '${name} (%)' AND database = '${db}'" | \
   	psql -h${host} -p${port} -U${user} ${db} --tuples-only 2>&1 | \
   	sed -e 's/^[\t ]*//g' -e 's/[\t ]*$//g')
   if [ ${?} -ne 0 -o "${result:0:7}" == "ERROR: " -o \
@@ -255,30 +257,23 @@ function get_patch_status(){
 #   	$2 = patch_host
 #   Returns: 0 if will rerun, -1 if not.
 function decide_rerun(){
-  local state=${?}
-  if [ ${state} -eq 2 ]; then
-    local response='rubbish'
-    if [ ${rv} -eq 1 ]; then
-      echo -n 'Patch has already been run on this server. '
-      echo -n 'Want to run it again? (y/N): '
+  echo -n 'Patch has already been run on this server. '
+  echo -n 'Want to run it again? (y/N): '
+  local response='rubbish'
+  while [ "${response}" == "rubbish" ]; do
+    read response
+    if [ "${response}" == "y" -o "${response}" == "Y" ]; then
+      [ ${DEBUG} -ne 0 ] && log_debug 'Will re-run patch.'
+    elif [ "${response}" == "n" -o "${response}" == "N" -o \
+    	"${response}" == "" ]; then
+      echo 'No'
+      [ ${DEBUG} -ne 0 ] && log_debug 'Aborted by user...'
+      return -1
     else
-      echo -n 'Want to run the patch anyway? (y/N): '
+      response='rubbish'
+      echo -n 'Stop fooling around. (y/N)?: '
     fi
-    while [ "${response}" == "rubbish" ]; do
-      read response
-      if [ "${response}" == "y" -o "${response}" == "Y" ]; then
-        [ ${DEBUG} -ne 0 ] && log_debug 'Will re-run patch.'
-      elif [ "${response}" == "n" -o "${response}" == "N" -o \
-      	"${response}" == "" ]; then
-        echo 'No'
-        [ ${DEBUG} -ne 0 ] && log_debug 'Aborted by user...'
-        return -1
-      else
-        response='rubbish'
-        echo -n 'Stop fooling around. (y/N)?: '
-      fi
-    done
-  fi
+  done
   return 0
 }
 # Function "decide_rerun" [ end ] ---------------------------------------------
@@ -328,7 +323,8 @@ function main(){
   [ ${DEBUG} -ne 0 ] && log_debug "Patch host: ${patch_host}"
 
   # Get status...
-  local execution_time=$(get_patch_status "${patch_name}")
+  local execution_time;
+  execution_time=$(get_patch_status "${patch_name}")
   local let last_status=${?}
   [ ${DEBUG} -ne 0 ] && log_debug "Last status: ${last_status}"
 
