@@ -22,7 +22,7 @@ DECLARED_CONNECTIONS=()
 
 # Test and run DB variables script [start] ------------------------------------
 if [ ! -x "${DBVARIABLES_FILE}" ]; then
-  log_err -n "File '${DBVARIABLES_FILE}' MUST EXIST and be EXECUTABLE."
+  log_err "File '${DBVARIABLES_FILE}' MUST EXIST and be EXECUTABLE."
   exit -1
 fi
 . "${DBVARIABLES_FILE}"
