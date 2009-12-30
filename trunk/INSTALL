@@ -13,3 +13,7 @@ Have a main database (${PG_PATCHMANAGER_DB*}) where to put this patches table:
     status INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT PRIMARY KEY (patch)
   );
+
+Be sure 'max_prepared_transactions' in PostgreSQL configuration has a value set
+accordingly. Remember that the patch_runner prepares a transaction for every
+exec_sql call to each database.
