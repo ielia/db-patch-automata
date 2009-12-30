@@ -9,3 +9,6 @@ Known Bugs and Limitations
   back and run again.
 - Patches that have collateral effects may cause trouble to roll back and run
   again.
+- When in trouble, take a look into the pg_prepared_xacts of each PostgreSQL
+  server to see what transactions are prepared into which database and either
+  commit them or roll them back, depending on your status and needs.
