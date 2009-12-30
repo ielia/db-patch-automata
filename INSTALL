@@ -1,0 +1,15 @@
+INSTALLATION INSTRUCTIONS
+
+Have the following Perl modules installed:
+  - DBI
+  - DBD::Pg
+  - IPC::Open2
+
+Have a main database (${PG_PATCHMANAGER_DB*}) where to put this patches table:
+  CREATE TABLE environmentpatch(
+    patch VARCHAR NOT NULL,
+    source VARCHAR NOT NULL,
+    executiontime TIMESTAMP NOT NULL DEFAULT now(),
+    status INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT PRIMARY KEY (patch)
+  );
